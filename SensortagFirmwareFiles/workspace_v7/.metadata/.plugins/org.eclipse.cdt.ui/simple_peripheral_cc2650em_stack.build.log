@@ -1,0 +1,13 @@
+
+**** Build of configuration FlashROM for project simple_peripheral_cc2650em_stack ****
+
+"C:\\ti\\ccsv7\\utils\\bin\\gmake" -k -j 8 all -O 
+"C:/ti/simplelink/ble_sdk_2_02_01_18/examples/cc2650em/simple_peripheral/ccs/stack/../../iar/stack/../../../../../tools/lib_search/lib_search.exe" C:/ti/simplelink/ble_sdk_2_02_01_18/examples/cc2650em/simple_peripheral/ccs/stack/../../iar/stack/build_config.opt "C:/ti/simplelink/ble_sdk_2_02_01_18/examples/cc2650em/simple_peripheral/ccs/stack/../../iar/stack/../../../../../tools/lib_search/params_split_cc2640.xml" C:/ti/simplelink/ble_sdk_2_02_01_18/examples/cc2650em/simple_peripheral/ccs/stack/../../iar/stack/../../../../../src/../blelib "C:/ti/simplelink/ble_sdk_2_02_01_18/examples/cc2650em/simple_peripheral/ccs/stack/../../iar/stack/../../ccs/config/lib_linker.cmd"
+<<< Using Library: host_pxxx.a >>>
+<<< Using Library: cc2640_ctrl_pxxx.a >>>
+<<< Using Library: cc26xx_hci_tl_none.a >>>
+<<< Not Modifying lib_linker.cmd. Stack configurations have not changed. >>>
+' '
+gmake[2]: 'simple_peripheral_cc2650em_stack.out' is up to date.
+
+**** Build Finished ****

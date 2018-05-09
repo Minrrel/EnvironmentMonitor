@@ -1,0 +1,10 @@
+
+**** Build of configuration Debug for project tirtos_lab1_cc2650stk ****
+
+"C:\\ti\\ccsv7\\utils\\bin\\gmake" -j -k -j 8 all -O 
+making ../src/sysbios/sysbios.aem3 ...
+gmake[1]: Nothing to be done for 'all'.
+making ../src/sysbios/sysbios.aem3 ...
+gmake[2]: Nothing to be done for 'all'.
+
+**** Build Finished ****

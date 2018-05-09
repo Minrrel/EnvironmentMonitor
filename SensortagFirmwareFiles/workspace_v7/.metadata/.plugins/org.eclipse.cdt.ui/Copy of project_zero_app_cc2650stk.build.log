@@ -1,0 +1,7 @@
+
+**** Build of configuration Debug for project Copy of project_zero_app_cc2650stk ****
+
+"C:\\ti\\ccsv7\\utils\\bin\\gmake" -j -k -j 8 all -O 
+gmake[1]: 'Copy of project_zero_app_cc2650stk.out' is up to date.
+
+**** Build Finished ****

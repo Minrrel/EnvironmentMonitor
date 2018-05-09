@@ -1,0 +1,544 @@
+﻿<!DOCTYPE html>
+<html>
+
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width*2, user-scalable=no,
+    shrink-to-fit=yes, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0" />
+
+
+<link rel="stylesheet" href="libs/jquery-ui-1.12.1/jquery-ui.css">
+
+<title>Enviorment Monitor</title>
+<script>
+
+/*Letter correspondances for the commands sent/recieved from the sensortag:
+"T" - max temp
+"t" - min temp
+"a" - current temp
+"P" - max pressure
+"p" - min pressure
+"r" - current pressure
+"H" - max humidity
+"h" - min humidity
+"u" - current humidity
+"R" - rain threshold
+"w" - current rain percentage change
+"b" - current battery level
+"o" - called to switch off the alarm
+"s" - called to check the alarm 
+*/
+
+// Redirect console.log when running from Evothings Workbench.
+if (window.hyper && window.hyper.log) { console.log = hyper.log }
+</script>
+</head>
+
+<body>
+
+<h1>Enviorment Monitor</h1>
+
+
+<script src="cordova.js"></script>
+
+<script src="libs/jquery/jquery.js"></script>
+<script src="libs/jquery-ui-1.12.1/jquery-ui.js"></script>
+<script src="libs/jquery.ui.touch-punch.min.js"></script>
+
+<script>
+// UUID of Enviorment service.
+var ENVMON_SERVICE = 'f0001150-0451-4000-b000-000000000000'
+
+// UUID of Enviorment Monitor Command charateristic
+var ENVMON_COMMAND = 'f0001151-0451-4000-b000-000000000000'
+
+// UUID of enviorment monitor result characteristic.
+var ENVMON_RESULT = 'f0001152-0451-4000-b000-000000000000'
+
+var currentDevice;
+var service;
+
+
+//Defining variables for the Enviorment Monitor app
+
+var currentTemp=0;
+var minTemp=-10;
+var maxTemp=40;
+var lastMinTemp=-10000;
+var lastMaxTemp=10000;
+
+var currentPress=0;
+var minPress=0;
+var maxPress=2000;
+var lastMinPress=-10000;
+var lastMaxPress=10000;
+
+var currentHum=0;
+var minHum=0;
+var maxHum=100;
+var lastMinHum=-10000;
+var lastMaxHum=10000;
+
+var currentRain=0;
+var minRain=0;
+var maxRain=100;
+var lastMinRain=10000;
+
+var currentBattery="---"
+
+
+//Connecting to the device on startup of the app
+function findDevice()
+{
+    console.log('Start scanning')
+    document.getElementById("status").innerHTML = "Start scanning";
+    // Start scanning. Two callback functions are specified.
+    evothings.ble.startScan(
+        onDeviceFound,
+        onScanError)
+
+    // This function is called when a device is detected, here
+    // we check if we found the device we are looking for.
+    function onDeviceFound(device)
+    {
+        console.log('Found device: ' + device.advertisementData.kCBAdvDataLocalName)
+        document.getElementById("status").innerHTML = "Found device:  " + device.advertisementData.kCBAdvDataLocalName;
+
+        if (device.advertisementData.kCBAdvDataLocalName == 'Environment Mon')
+        {
+            console.log('Found the TI SensorTag!')
+            document.getElementById("status").innerHTML = "Found the TI SensorTag!";
+
+            // Stop scanning.
+            evothings.ble.stopScan()
+
+            // Connect.
+            connectToDevice(device)
+        }
+    }
+
+    // Function called when a scan error occurs.
+    function onScanError(error)
+    {
+        console.log('Scan error: ' + error)
+        document.getElementById("status").innerHTML = "Scan error: " + error;
+    }
+}
+
+function connectToDevice(device)
+{
+    evothings.ble.connectToDevice(
+        device,
+        onConnected,
+        onDisconnected,
+        onConnectError)
+
+    function onConnected(device)
+    {
+        console.log('Connected to the Enviorment Monitor')
+        document.getElementById("status").innerHTML = "Connected to the Enviorment Monitor";
+        currentDevice=device;
+        synchronise();
+    }
+
+    // Function called if the device disconnects.
+    function onDisconnected(error)
+    {
+        console.log('Device disconnected')
+        document.getElementById("status").innerHTML = "Device disconnected";
+    }
+
+    // Function called when a connect error occurs.
+    function onConnectError(error)
+    {
+        console.log('Connect error: ' + error)
+        document.getElementById("status").innerHTML = "Connect error: " + error;
+    }
+}
+
+//Commands sent to the sensorTag at the start to sync up the sliders on the app
+var syncValues = ["b","T","t","a","P","p","r","H","h","u","R","w"];
+var syncValuesIndex=0;
+var busy=false;
+
+function synchronise()
+{
+    if (!busy)
+    {
+        busy=true;
+        sendAndReceiveData(syncValues[syncValuesIndex]);
+        syncValuesIndex++;
+
+
+    }
+
+    //if busy waits before trying to synchronise the next value
+    if(syncValuesIndex<syncValues.length)
+    {
+        //Calls the function after 100ms
+        setTimeout(function(){synchronise()},100);  
+    }
+    else
+    {
+        //enable the sliders and set the update function to be called (once a second once the initial synchronise is finished)
+        enableSliders();
+        setInterval(function(){update()},1000);
+    }
+
+}
+
+//corresponding values to be updated in order
+var currentValues = ["a","s", "r","s", "u","s", "w", "s","b", "s","x"];
+var currentValuesIndex = 0;
+
+//updates the values stored on the app
+function update()
+{
+    console.log('Doing update')
+    if(lastMaxTemp!=maxTemp)
+    {
+        sendAndReceiveData("T,"+ maxTemp.toString())
+        lastMaxTemp=maxTemp;
+    }
+    else if (lastMinTemp!=minTemp)
+    {
+        sendAndReceiveData("t,"+ minTemp.toString())
+        lastMinTemp=minTemp;
+    }
+
+    else if (lastMaxPress!=maxPress)
+    {
+        sendAndReceiveData("P,"+ (maxPress).toString())
+        lastMaxPress=maxPress;
+    }
+    else if (lastMinPress!=minPress)
+    {
+        sendAndReceiveData("p,"+ (minPress).toString())
+        lastMinPress=minPress;
+    }
+
+    else if (lastMaxHum!=maxHum)
+    {
+        sendAndReceiveData("H,"+ maxHum.toString())
+        lastMaxHum=maxHum;
+    }
+    else if (lastMinHum!=minHum)
+    {
+        sendAndReceiveData("h,"+ minHum.toString())
+        lastMinHum=minHum;
+    }
+    else if (lastMinRain!=minRain)
+    {
+        sendAndReceiveData("R,"+ minRain.toString())
+        lastMinRain=minRain;
+    }
+    else
+    {
+        sendAndReceiveData(currentValues[currentValuesIndex])
+        currentValuesIndex++;
+        if (currentValuesIndex==currentValues.length)
+        {
+            currentValuesIndex=0;
+        }
+    }
+}
+
+//To update values stored in the app when data is recieved
+function updateValues(recieveData)
+{
+    //to split the recieved string (which in the majority of the cases has the identifier of the data followed by a comma and then the actual value of the data)
+    var temp = recieveData.split(",");
+    switch(temp[0])
+    {
+        case "T":
+            maxTemp=parseFloat(temp[1])
+            $("#temperature").val(minTemp + " "+ currentTemp + " " + maxTemp)
+            break;
+        
+        case "t":
+            minTemp=parseFloat(temp[1])
+            $("#temperature").val(minTemp + " "+ currentTemp + " " + maxTemp)
+            break;
+
+        case "a":
+            currentTemp=parseFloat(temp[1])
+            $("#temperature").val(minTemp + " "+ currentTemp + " " + maxTemp)
+            break;
+        
+        case "P":
+            maxPress=parseFloat(temp[1])
+            $("#pressure").val(minPress + " "+ currentPress + " " + maxPress)
+            break;
+
+        case "p":
+            minPress=parseFloat(temp[1])
+            $("#pressure").val(minPress + " "+ currentPress + " " + maxPress)
+            break;
+        
+        case "r":
+            currentPress=parseFloat(temp[1])
+            $("#pressure").val(minPress + " "+ currentPress + " " + maxPress)
+            break;
+
+        case "H":
+            maxHum=parseFloat(temp[1])
+            $("#humidity").val(minHum + " "+ currentHum + " " + maxHum)
+            break;
+
+        case "h":
+            minHum=parseFloat(temp[1])
+            $("#humidity").val(minHum + " "+ currentHum + " " + maxHum)
+            break;   
+        
+        case "u":
+            currentHum=parseFloat(temp[1])
+            $("#humidity").val(minHum + " "+ currentHum + " " + maxHum)
+            break;
+
+
+        case "R":
+            minRain=parseFloat(temp[1])
+            $("#rain").val(currentRain + " " + minRain)
+            break;   
+
+        case "w":
+            currentRain=parseFloat(temp[1])
+            $("#rain").val(currentRain + " " + minRain)
+            break;
+        case "b":
+            currentBattery=parseFloat(temp[1])
+            currentBattery/=256 //value 3.8 so bottom 8 bits fraction
+            $("#battery").val(currentBattery)
+        break;
+
+        //For the alarm results, the string it set out with an S, followed by which charaterstic called the alarm and finally the value of that charaterstic (seperated by commas)  
+        case "s":
+            switch(temp[1])
+            {
+                case "T":
+                    document.getElementById("result").innerHTML="Maximum temperature exceeded: " + temp[2]
+                    break;
+                case "t":
+                    document.getElementById("result").innerHTML="Mminimum temperature exceeded: " + temp[2]
+                    break;
+
+                case "P":
+                    document.getElementById("result").innerHTML="Maximum pressure exceeded: " + temp[2]
+                    break;
+                case "p":
+                    document.getElementById("result").innerHTML="Mminimum pressure exceeded: " + temp[2]
+                    break;    
+
+                case "H":
+                    document.getElementById("result").innerHTML="Maximum humidity exceeded: " + temp[2]
+                    break;
+                case "h":
+                    document.getElementById("result").innerHTML="Mminimum humidity exceeded: " + temp[2]
+                    break;     
+                case "R":
+                    document.getElementById("result").innerHTML="Rain percentage exceeded " + temp[2]
+                    break;    
+
+            }
+
+            break;
+
+
+    }
+}
+
+
+//Sends a string to request information or alter settings and receive the information back 
+function sendAndReceiveData(sendData)
+{
+    //required for sending and recieving data
+    var service = evothings.ble.getService(currentDevice, ENVMON_SERVICE);
+    var commandCharacteristic = evothings.ble.getCharacteristic(service, ENVMON_COMMAND);
+    var resultCharacteristic = evothings.ble.getCharacteristic(service, ENVMON_RESULT);
+
+
+    //Converts string into numbers it uses for write charaterstic
+    var buf = new ArrayBuffer(sendData.length+2);
+    var bufView = new Uint8Array(buf);
+    for (var i = 0; i < sendData.length; i++)
+    {
+        bufView[i] = sendData.charCodeAt(i);
+    }
+    bufView[i] = 0; //make sure properly terminated
+
+    //Sends the data to the sensortag (uing ble library)
+    evothings.ble.writeCharacteristic(
+        currentDevice,
+        commandCharacteristic,
+        bufView,
+        sendENVMONCommandSuccess,
+        sendENVMONCommandError);
+        
+        
+    function sendENVMONCommandSuccess()
+    {
+        console.log('Send command success ' + sendData.toString())
+
+            //read the data recieved back if successful send
+            evothings.ble.readCharacteristic(
+            currentDevice,
+            resultCharacteristic,
+            sendENVMONReadSuccess,
+            sendENVMONReadError);
+    }
+
+    function sendENVMONCommandError()
+    {
+        console.log('Send command error: ' + error)
+    }
+
+
+    function sendENVMONReadSuccess(data)
+    {
+        var raw=evothings.ble.fromUtf8(data)
+        console.log('Send read success:  ' + raw)
+        updateValues(raw);
+        busy=false;
+    }
+
+    function sendENVMONReadError()
+    {
+        console.log('Send read error: ' + error)
+    }
+
+
+}
+
+
+
+
+
+
+
+
+// Start scanning for devices when the plugin has loaded.
+document.addEventListener('deviceready', findDevice, false)
+
+
+//Creating the sliders for each of the measurements to slide to determine the boundaries above/below which the alarm goes off.
+function enableSliders()
+{
+    $( function() {
+    $( "#temperature-slider" ).slider({
+      range: true,
+      min: -10,
+      max: 50,
+      values: [ minTemp, maxTemp ],
+      slide: function( event, ui ) {
+        updateValues("T,"+ui.values[1])
+        updateValues("t,"+ui.values[0])
+      }
+    });
+
+  } );
+
+    $( function() {
+    $( "#pressure-slider" ).slider({
+      range: true,
+      min: 300, // ~pressure at Mt Everest also picked as min slider value
+      max: 1100,    //1060 is the maximum over Europe
+      values: [ minPress, maxPress ],
+      slide: function( event, ui ) {
+        updateValues("P,"+ui.values[1])
+        updateValues("p,"+ui.values[0])
+
+      }
+    });
+
+  } );
+
+    $( function() {
+    $( "#humidity-slider" ).slider({
+      range: true,
+      min: 0,
+      max: 100,
+      values: [ minHum, maxHum ],
+      slide: function( event, ui ) {
+        updateValues("H,"+ui.values[1])
+        updateValues("h,"+ui.values[0])
+      }
+    });
+
+  } );
+
+    $( function() {
+    $( "#rain-slider" ).slider({
+      range: "min",
+      min: 0,
+      max: 100,
+      value: minRain,
+      slide: function( event, ui ) {
+        updateValues("R,"+ui.value)
+      }
+    });
+
+  } );
+
+
+
+}
+
+
+
+</script>
+
+ <!--Setup of the layout of the actual app page when loaded on a phone-->
+
+ <!--Button to switch off the alarm (at top of the app layout)-->
+<button type="button"
+onclick= sendAndReceiveData("o")>
+Switch off Alarm.</button>
+
+<!--the reason the alarm last went off-->
+<p id="result" ></p>
+
+
+<!--The current status of the app, e.g if connect to sensortag/connected-->
+<p id="status"></p>
+
+<!--The readings and sliders for each of the charateristics-->
+<p> 
+    Temperature:
+    <input type="text" id="temperature" readonly style="border:0; color:#f6931f; font-weight:bold;">
+</p>
+   
+  <div id="temperature-slider"></div>
+
+
+
+<p>
+    Pressure:
+    <input type="text" id="pressure" readonly style="border:0; color:#f6931f; font-weight:bold;">
+</p>
+    
+    <div id="pressure-slider"></div>
+
+
+<p>
+    Humidity:
+    <input type="text" id="humidity" readonly style="border:0; color:#f6931f; font-weight:bold;">
+</p>
+    
+    <div id="humidity-slider"></div>
+
+<p>
+    Rain:
+    <input type="text" id="rain" readonly style="border:0; color:#f6931f; font-weight:bold;">
+</p>
+    
+    <div id="rain-slider"></div>
+
+    <p>
+        Battery:
+        <input type="text" id="battery" readonly style="border:0; color:#f6931f; font-weight:bold;">
+    </p>
+    
+
+
+</body>
+</html>

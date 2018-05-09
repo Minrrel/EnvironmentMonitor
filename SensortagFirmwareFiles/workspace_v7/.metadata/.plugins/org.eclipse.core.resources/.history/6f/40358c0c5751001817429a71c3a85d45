@@ -1,0 +1,648 @@
+/*
+ * Copyright (c) 2015-2016, Texas Instruments Incorporated
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * *  Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * *  Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * *  Neither the name of Texas Instruments Incorporated nor the names of
+ *    its contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+ * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ *  ======== emon.c ========
+ */
+/* XDCtools Header files */
+#include <xdc/std.h>
+#include <xdc/runtime/System.h>
+#include <xdc/runtime/Log.h>
+/* BIOS Header files */
+#include <ti/sysbios/BIOS.h>
+#include <ti/sysbios/knl/Task.h>
+
+/* TI-RTOS Header files */
+#include <ti/drivers/GPIO.h>
+#include <ti/drivers/PWM.h>
+
+#include <string.h>
+
+#include "sensors/SensorI2C.h"
+#include "sensors/SensorOpt3001.h"
+#include "sensors/SensorBmp280.h"
+#include "sensors/SensorHdc1000.h"
+#include "sensors/SensorMpu9250.h"
+#include "sensors/SensorTmp007.h"
+
+
+/* Example/Board Header files */
+#include "Board.h"
+
+#include <ti/sysbios/knl/Clock.h>
+#include <driverlib/aon_batmon.h>   //for battery monitor
+
+#include "envservice.h"
+//#include <stdio.h>
+
+#define TASKSTACKSIZE   512
+#define DELAY_MS(i)      (Task_sleep(((i) * 1000) / Clock_tickPeriod))
+
+char g_currentReadAttribute;
+
+//initialising values here doesn't work
+int g_maxtemp=1000000;
+int g_mintemp=-1000000;
+uint32_t g_maxpress=1000000;
+uint32_t g_minpress=0;
+uint32_t g_maxhum=1000000;
+uint32_t g_minhum=0;
+int g_minrain=1000000;
+int g_pressureDifference=0;
+int g_batteryLevel=0;
+
+int32_t g_temp=0;
+int32_t g_tempop2=0;
+int32_t g_humd=0;
+uint32_t g_pressure=0;
+int32_t g_averageTemp=0;
+
+int32_t g_rainPercentage=0;
+
+//for storing alarm reason
+int32_t g_lastAlarmValue=0;
+char g_lastAlarmType=0;
+
+bool g_buzzerOn;
+bool g_buzzerOff;
+
+Task_Struct tsk0Struct;
+UInt8 tsk0Stack[TASKSTACKSIZE];
+Task_Handle task;
+
+Task_Struct tsk1Struct;
+UInt8 tsk1Stack[TASKSTACKSIZE];
+Task_Handle task2;
+
+static PIN_Handle ledPinHandle;
+static PIN_State ledPinState;
+/*
+ * Initial LED pin configuration table
+ *   - LEDs Board_LED0 & Board_LED1 are off.
+ */
+PIN_Config ledPinTable[] = {
+  Board_LED0 | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX,
+  Board_LED1 | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX,
+  PIN_TERMINATE
+};
+
+
+//For converting an integer to ascii
+void my_itoa(int dataIn, uint8_t* result)
+{
+
+    for(int i=0;i<10;i++)
+    {
+        result[i]=0;
+    }
+
+    if (dataIn==0)
+    {
+        result[0] = '0';
+        return;
+    }
+
+
+
+    if (dataIn < 0)
+    {
+        dataIn =- dataIn;
+        *result = '-';
+        result++;
+    }
+
+    int divisor=1000000;
+    while(dataIn/divisor==0)
+    {
+        divisor=divisor/10;
+    }
+
+    while(divisor!=0)
+    {
+        int digit = dataIn/divisor;
+
+        //+'0' so it is the ascii code rather than actual number
+        *result = digit+'0';
+        result++;
+
+        dataIn=dataIn-(digit*divisor);
+        divisor=divisor/10;
+    }
+
+    return;
+
+}
+
+
+
+
+Void AlarmTest()
+{
+
+    if (g_averageTemp>g_maxtemp)
+    {
+       g_buzzerOn=true;
+       g_lastAlarmValue=g_averageTemp;
+       g_lastAlarmType='T';
+    }
+      if (g_averageTemp<g_mintemp)
+      {
+         g_buzzerOn=true;
+         g_lastAlarmValue=g_averageTemp;
+         g_lastAlarmType='t';
+      }
+      if (g_pressure>g_maxpress)
+      {
+          g_buzzerOn=true;
+          g_lastAlarmValue=g_pressure;
+          g_lastAlarmType='P';
+      }
+      if (g_pressure<g_minpress)
+      {
+          g_buzzerOn=true;
+          g_lastAlarmValue=g_pressure;
+          g_lastAlarmType='p';
+      }
+      if (g_humd>g_maxhum)
+      {
+          g_buzzerOn=true;
+          g_lastAlarmValue=g_humd;
+          g_lastAlarmType='H';
+      }
+      if (g_humd<g_minhum)
+      {
+          g_buzzerOn=true;
+          g_lastAlarmValue=g_humd;
+          g_lastAlarmType='h';
+      }
+
+      if (g_rainPercentage>g_minrain)
+      {
+          g_buzzerOn=true;
+          g_lastAlarmValue=g_rainPercentage;
+          g_lastAlarmType='R';
+      }
+
+      if(g_buzzerOn==false)
+      {
+          g_buzzerOff=false;
+      }
+
+      if(g_buzzerOff==true)
+      {
+      g_buzzerOn=false;
+      }
+
+}
+
+
+//'T' max temperature
+//'t' min temperature
+
+
+
+Void updateResult()
+{
+    es_RESULTVal[1]=',';
+    es_RESULTVal[0]=g_currentReadAttribute;
+    switch (g_currentReadAttribute)
+    {
+
+                case 'T':
+                    my_itoa(g_maxtemp,&es_RESULTVal[2]);
+                    break;
+                case 't':
+                    my_itoa(g_mintemp,&es_RESULTVal[2]);
+                    break;
+                case 'e':
+
+                    my_itoa(g_tempop2,&es_RESULTVal[2]);
+                    break;
+                case 'm':
+                    my_itoa(g_temp,&es_RESULTVal[2]);
+                    break;
+
+                case 'a':
+                    my_itoa(g_averageTemp,&es_RESULTVal[2]);
+                    break;
+
+                case 'P':
+                    my_itoa(g_maxpress,&es_RESULTVal[2]);
+                    break;
+
+                case 'p':
+                    my_itoa(g_minpress,&es_RESULTVal[2]);
+                    break;
+                case 'r':
+                    my_itoa(g_pressure,&es_RESULTVal[2]);
+                    break;
+
+                case 'H':
+                    my_itoa(g_maxhum,&es_RESULTVal[2]);
+                    break;
+                case 'h':
+                    my_itoa(g_minhum,&es_RESULTVal[2]);
+                    break;
+                case 'u':
+                    my_itoa(g_humd,&es_RESULTVal[2]);
+                    break;
+
+                case 'R':
+                    my_itoa(g_minrain,&es_RESULTVal[2]);
+                    break;
+
+
+                case 'w':
+                    my_itoa(g_rainPercentage,&es_RESULTVal[2]);
+                    break;
+
+                case 'o':
+                    g_buzzerOff=true;
+                    break;
+
+                case 's':
+                    es_RESULTVal[2]=g_lastAlarmType;
+                    es_RESULTVal[3]=',';
+                    my_itoa(g_lastAlarmValue,&es_RESULTVal[4]);
+                    break;
+
+                case 'b':
+                    my_itoa(g_batteryLevel,&es_RESULTVal[2]);
+                    break;
+
+                case 'x':
+                    my_itoa(g_pressureDifference,&es_RESULTVal[2]);
+                    break;
+
+
+            }
+
+    if(g_buzzerOn==false)
+    {
+        g_buzzerOff=false;
+    }
+
+    if(g_buzzerOff==true)
+    {
+    g_buzzerOn=false;
+    }
+
+
+   //only do after sensors have been read and keep to 1 thread
+    // AlarmTest();
+}
+
+
+Void sensorRead(UArg arg0, UArg arg1)
+{
+    //need to initialise values here as initialising globally doesn't work.
+    g_maxtemp=50;
+    g_mintemp=-10;
+    g_maxpress=1200;
+    g_minpress=300;   //pressure unsigned
+    g_maxhum=100;
+    g_minhum=0;
+    g_minrain=100;
+    g_pressureDifference=0;
+    g_batteryLevel=0;
+
+
+    if (SensorI2C_open())
+    {
+        //System_printf("01/n");
+        //System_flush();
+
+
+        SensorBmp280_init();            // Pressure Sensor
+
+       // System_printf("02/n");
+       // System_flush();
+
+
+        SensorBmp280_enable(true);
+
+       // System_printf("03/n");
+       // System_flush();
+
+
+        SensorHdc1000_init();   //temp + humidity
+
+       // System_printf("04/n");
+       // System_flush();
+
+
+        SensorHdc1000_start();
+
+       // System_printf("05/n");
+       // System_flush();
+        AONBatMonEnable();
+
+    }
+    else
+    {
+
+        Log_error0("Error initializing sensors\n");
+
+        //System_printf("Oops");
+        //System_flush();
+        System_abort("Error initializing sensors\n");
+    }
+
+
+
+
+
+    uint16_t rawTemp;
+    uint16_t rawHumd;
+
+    uint8_t rawData[8];    //needs 6 bytes, 8 just to be safe
+
+
+
+    //For determining change in pressure to decide likelihood of rain
+    uint16_t currentIndex = 0;
+    int32_t storedPressure[16];
+
+    for (int i=0;i<16;i++)
+    {
+        storedPressure[i]=0;
+    }
+
+
+
+
+    while (1) {
+
+        PIN_setOutputValue(ledPinHandle, Board_LED0, 1);
+        SensorHdc1000_start(); //So that it rereads each reading
+        g_batteryLevel = AONBatMonBatteryVoltageGet();
+        DELAY_MS(20);     //20ms delay
+
+        if(SensorHdc1000_read(&rawTemp,&rawHumd))
+        {
+        DELAY_MS(20);     //takes at least 20 mili seconds to convert
+
+        //System_printf("To Here2.\n");
+        //System_flush();
+        }
+
+
+        SensorBmp280_enable(true);
+
+        DELAY_MS(20);
+
+        SensorBmp280_read(rawData);
+
+       // SensorBmp280_enable(false);
+
+
+        g_temp=((rawTemp*165)/65536)-40;
+        g_humd=((rawHumd*100)/65536);
+
+
+        DELAY_MS(20);     //takes at least 20 mili seconds to convert
+
+        SensorBmp280_convert(rawData, &g_tempop2, &g_pressure);
+
+        //for rain
+
+        int32_t pressureDifference = g_pressure-storedPressure[currentIndex];
+        g_pressureDifference=pressureDifference;
+        storedPressure[currentIndex]=g_pressure;
+        g_pressure /= 100;
+        currentIndex++;
+        //So that it wraps around if it reaches the 16th position in the array
+        currentIndex&=0xF;
+
+        g_rainPercentage=0;
+
+        //Very basic rain percentage prediction
+        if(pressureDifference<0)
+        {
+
+            if(g_pressure<1020)
+            {
+                if(g_pressure<870)
+                {
+                    g_rainPercentage=100;
+                }
+                else
+                {
+                    g_rainPercentage=100-((g_pressure-870)*100/(1020-870));
+
+                }
+            }
+        }
+
+        g_averageTemp = (((g_temp)+(g_tempop2/100))/2);
+
+       // System_printf("temp %d temp2 %d averageTemp %d \n");
+       // System_flush();
+
+        //result is updated on demand
+      // updateResult();
+
+
+
+          /*
+          if (a>h_minrain)
+          {
+              g_buzzerOn=true;
+          }
+          */
+
+      DELAY_MS(20);
+
+        //System_printf("Temp");
+        //float dont work
+        //System_printf("Temp %d Humid %d temp2 %d pressure %d\n",(int)(temp*100),(int)(humd*100),temp2,pressure);
+        //System_flush();
+
+        static int lastmin=0;
+        static int lastmax=0;
+        if (lastmin!=g_mintemp || lastmax!=g_maxtemp)
+        {
+        //    System_printf("Min_Temp %d Max_temp %d\n",(int)(g_mintemp),(int)(g_maxtemp));
+        //    System_flush();
+            Log_info2("Min Max Temp CHanged %d %d.",
+                    (IArg)g_mintemp,
+                    (IArg)g_maxtemp);
+
+            lastmin=g_mintemp;
+            lastmax=g_maxtemp;
+        }
+        PIN_setOutputValue(ledPinHandle, Board_LED0, 0);
+        AlarmTest();
+        /* Wait a while, because doWork should be a periodic thing, not continuous.*/
+        //Task_sleep(1000 * (1000 / Clock_tickPeriod));
+
+        //So that it only updates once per minute
+        DELAY_MS(59900);
+
+
+    }
+
+
+
+
+}
+
+
+/*
+ *  ======== pwmLEDFxn ========
+ *  Task periodically increments the PWM duty for the on board LED.
+ */
+Void pwmLEDFxn(UArg arg0, UArg arg1)
+{
+    PWM_Handle pwm1;
+    PWM_Params params;
+    uint16_t   pwmPeriod = 300;      // Period and duty in microseconds
+    uint16_t   duty = 0;
+    uint16_t   dutyInc = 100;
+
+    PWM_Params_init(&params);
+    params.dutyUnits = PWM_DUTY_US;
+    params.dutyValue = 0;
+    params.periodUnits = PWM_PERIOD_US;
+    params.periodValue = pwmPeriod;
+    pwm1 = PWM_open(Board_PWM2, &params);
+   // pwm1 = PWM_open(Board_PWM1, &params);
+
+    if (pwm1 == NULL)
+    {
+      //  printf("Board_PWM0 did not open\n");
+      //  fflush (stdout);
+        System_abort("Board_PWM0 did not open");
+    }
+
+
+
+    /* Loop forever incrementing the PWM duty */
+
+
+    while(1) {
+
+        if (g_buzzerOn) {
+            PIN_setOutputValue(ledPinHandle, Board_LED1, 1);
+            PWM_start(pwm1);
+            for(int i=0; i<100; i++)
+            {
+                PWM_setDuty(pwm1, duty);
+                duty = (duty + dutyInc);
+                if (duty == pwmPeriod || (!duty)) {
+                    dutyInc = - dutyInc;
+                }
+
+                Task_sleep((UInt) arg0);
+            }
+        }
+        PIN_setOutputValue(ledPinHandle, Board_LED1, 0);
+        PWM_stop(pwm1);
+        Task_sleep(5000000 / Clock_tickPeriod);
+
+        Task_sleep((UInt) 500);
+    }
+
+}
+
+/*
+ *  ======== main ========
+ */
+int initBuzzer(void)
+{
+    g_buzzerOn=false;
+
+  //  printf("Hello");
+  //  fflush (stdout);
+  //  printf(" World!\n");
+  //  fflush (stdout);
+
+
+    /* SysMin will only print to the console when you call flush or exit */
+    System_flush();
+
+    Task_Params tskParams;
+    Task_Params tskParams2;
+
+    /* Call board init functions. */
+    //Board_initGeneral();    //init pins..now done in main
+    //Board_initGPIO();
+    Board_initPWM();
+
+
+
+    //Clock_setPeriod(sensorTimerClockHandle, (NODE_SENSOR_REPORTINTERVAL_FAST_MS * 1000 / Clock_tickPeriod));
+    //Clock_start(sensorTimerClockHandle);
+
+
+   // GPIO_write(Board_LED0, Board_LED_ON);
+    //printf(" here");
+    //fflush (stdout);
+
+
+    /* Construct LED Task thread */
+    Task_Params_init(&tskParams);
+    tskParams.stackSize = TASKSTACKSIZE;
+    tskParams.stack = &tsk0Stack;
+    tskParams.arg0 = 50;
+    Task_construct(&tsk0Struct, (Task_FuncPtr)pwmLEDFxn, &tskParams, NULL);
+
+    /* Obtain instance handle */
+    task = Task_handle(&tsk0Struct);
+
+    //see if can reuse variabl
+    Task_Params_init(&tskParams2);
+    tskParams2.stackSize = TASKSTACKSIZE;
+    tskParams2.stack = &tsk1Stack;
+    tskParams2.arg0 = 50;
+    Task_construct(&tsk1Struct, (Task_FuncPtr)sensorRead, &tskParams2, NULL);
+
+
+    /* Turn on user LED */
+    //GPIO_write(Board_LED0, Board_LED_ON);
+    //GPIO_write(Board_BUZZER, Board_BUZZER_ON);
+
+    ledPinHandle = PIN_open(&ledPinState, ledPinTable);
+      if(!ledPinHandle) {
+        Log_error0("Error initializing board LED pins");
+        Task_exit();
+      }
+
+    System_printf("Starting the example\nSystem provider is set to SysMin. "
+                  "Halt the target to view any SysMin contents in ROV.\n");
+
+    /* SysMin will only print to the console when you call flush or exit */
+    System_flush();
+
+    BIOS_start();
+    return (0);
+}

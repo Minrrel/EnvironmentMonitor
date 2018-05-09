@@ -1,0 +1,13 @@
+
+**** Build of configuration Debug for project Copy of project_zero_stack_cc2650 ****
+
+"C:\\ti\\ccsv7\\utils\\bin\\gmake" -j -k -j 8 all -O 
+"c:/ti/simplelink/ble_sdk_2_02_01_18/tools/lib_search/lib_search.exe" C:/Users/Olivia/workspace_v7/Copy of project_zero_stack_cc2650/TOOLS/build_config.opt "c:/ti/simplelink/ble_sdk_2_02_01_18/tools/lib_search/params_split_cc2640.xml" c:/ti/simplelink/ble_sdk_2_02_01_18/blelib "C:/Users/Olivia/workspace_v7/Copy of project_zero_stack_cc2650/TOOLS/lib_linker.cmd"
+makefile:214: recipe for target 'pre-build' failed
+usage: LibSearch [-h] [-v] opt xml libdir cmd [config]
+LibSearch: error: unrecognized arguments: C:/Users/Olivia/workspace_v7/Copy of project_zero_stack_cc2650/TOOLS/lib_linker.cmd
+gmake[1]: [pre-build] Error 2 (ignored)
+' '
+gmake[2]: 'Copy of project_zero_stack_cc2650.out' is up to date.
+
+**** Build Finished ****

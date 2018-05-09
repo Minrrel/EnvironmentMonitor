@@ -1,0 +1,28 @@
+{
+  "name": "envmonitor",
+  "version": "1.0.0",
+  "title": "Enviorment Monitor",
+  "description": "A basic monitor of the enviorment using the Sensortag.",
+  "tags": [],
+  "libraries": [
+    {
+      "name": "jquery",
+      "version": "2.1.1"
+    }
+  ],
+  "plugins": [
+    {
+      "name": "cordova-plugin-ble",
+      "version": "2.0.1"
+    }
+  ],
+  "index-file": "index.html",
+  "uuid": "5779f505-d492-4e8e-91c4-48b1506a0d15",
+  "icon": "app-icon.png",
+  "doc-url": "http://evothings.com/2.2/doc/examples/template-basic-app.html",
+  "long-description": "A basic monitor of the enviorment using  the Sensortag.",
+  "cordova-id": "com.evothings.examples.templatebasicapp",
+  "author-name": "Evothings",
+  "author-email": "build@evothings.com",
+  "author-url": "https://evothings.com"
+}
